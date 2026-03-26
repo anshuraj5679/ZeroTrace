@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --background: #000000;
+  --surface: #0d0d0d;
+  --surface-elevated: #111111;
+  --text: #e0e0e0;
+  --muted: #666666;
+  --border: #1a1a1a;
+  --cyan: #00f5ff;
+  --buy: #00ff88;
+  --sell: #ff3b3b;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(0, 245, 255, 0.08), transparent 40%),
+    linear-gradient(180deg, #050505 0%, #000000 100%);
+  color: var(--text);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 80px 80px;
+  opacity: 0.2;
+  mask-image: radial-gradient(circle at center, white, transparent 80%);
+}
+
+.terminal-card {
+  border: 1px solid var(--border);
+  background: rgba(13, 13, 13, 0.9);
+  box-shadow: 0 0 20px rgba(0, 245, 255, 0.08);
+}
+
+.grid-fade {
+  background-image:
+    linear-gradient(rgba(0, 245, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 245, 255, 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+  animation: drift 14s linear infinite;
+}
+
+.scanline {
+  position: relative;
+  overflow: hidden;
+}
+
+.scanline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(0, 245, 255, 0.06),
+    transparent
+  );
+  transform: translateY(-100%);
+  animation: sweep 7s linear infinite;
+}
+
+.glow-text {
+  text-shadow: 0 0 24px rgba(0, 245, 255, 0.32);
+}
+
+.flash-cyan {
+  animation: flash-cyan 1.4s ease-out;
+}
+
+@keyframes sweep {
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes drift {
+  50% {
+    background-position: 0 24px, 24px 0;
+  }
+}
+
+@keyframes flash-cyan {
+  0% {
+    background: rgba(0, 245, 255, 0.18);
+  }
+  100% {
+    background: transparent;
+  }
+}
+

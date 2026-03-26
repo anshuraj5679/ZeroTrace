@@ -1,0 +1,29 @@
+diff --git a/node_modules/cofhe-hardhat-plugin/dist/src/addresses.js b/node_modules/cofhe-hardhat-plugin/dist/src/addresses.js
+index f507dd3..217ca30 100644
+--- a/node_modules/cofhe-hardhat-plugin/dist/src/addresses.js
++++ b/node_modules/cofhe-hardhat-plugin/dist/src/addresses.js
+@@ -2,7 +2,7 @@
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.TEST_BED_ADDRESS = exports.QUERY_DECRYPTER_ADDRESS = exports.ZK_VERIFIER_ADDRESS = exports.TASK_MANAGER_ADDRESS = void 0;
+ exports.TASK_MANAGER_ADDRESS = "0xeA30c4B8b44078Bbf8a6ef5b9f1eC1626C7848D9";
+-exports.ZK_VERIFIER_ADDRESS = "0x0000000000000000000000000000000000000100";
+-exports.QUERY_DECRYPTER_ADDRESS = "0x0000000000000000000000000000000000000200";
+-exports.TEST_BED_ADDRESS = "0x0000000000000000000000000000000000000300";
++exports.ZK_VERIFIER_ADDRESS = "0x1000000000000000000000000000000000000100";
++exports.QUERY_DECRYPTER_ADDRESS = "0x2000000000000000000000000000000000000200";
++exports.TEST_BED_ADDRESS = "0x3000000000000000000000000000000000000300";
+ //# sourceMappingURL=addresses.js.map
+diff --git a/node_modules/cofhe-hardhat-plugin/src/addresses.ts b/node_modules/cofhe-hardhat-plugin/src/addresses.ts
+index d8b2769..576717e 100644
+--- a/node_modules/cofhe-hardhat-plugin/src/addresses.ts
++++ b/node_modules/cofhe-hardhat-plugin/src/addresses.ts
+@@ -1,6 +1,6 @@
+ export const TASK_MANAGER_ADDRESS =
+   "0xeA30c4B8b44078Bbf8a6ef5b9f1eC1626C7848D9";
+-export const ZK_VERIFIER_ADDRESS = "0x0000000000000000000000000000000000000100";
++export const ZK_VERIFIER_ADDRESS = "0x1000000000000000000000000000000000000100";
+ export const QUERY_DECRYPTER_ADDRESS =
+-  "0x0000000000000000000000000000000000000200";
+-export const TEST_BED_ADDRESS = "0x0000000000000000000000000000000000000300";
++  "0x2000000000000000000000000000000000000200";
++export const TEST_BED_ADDRESS = "0x3000000000000000000000000000000000000300";

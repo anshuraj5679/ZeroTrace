@@ -1,0 +1,46 @@
+diff --git a/node_modules/cofhejs/dist/node.js b/node_modules/cofhejs/dist/node.js
+index 59f7216..348579e 100644
+--- a/node_modules/cofhejs/dist/node.js
++++ b/node_modules/cofhejs/dist/node.js
+@@ -27467,8 +27467,8 @@ var MAX_UINT128 = 340282366920938463463374607431768211455n;
+ var MAX_UINT256 = 115792089237316195423570985008687907853269984665640564039457584007913129640319n;
+ var PUBLIC_KEY_LENGTH_MIN = 15e3;
+ var TaskManagerAddress = "0xeA30c4B8b44078Bbf8a6ef5b9f1eC1626C7848D9";
+-var MockZkVerifierAddress = "0x0000000000000000000000000000000000000100";
+-var MockQueryDecrypterAddress = "0x0000000000000000000000000000000000000200";
++var MockZkVerifierAddress = "0x1000000000000000000000000000000000000100";
++var MockQueryDecrypterAddress = "0x2000000000000000000000000000000000000200";
+ var MockZkVerifierSignerPkey = "0x6c8d7f768a6bb4aafe85e8a2f5a9680355239c7e14646ed62b044e39de154512";
+ var fnExistsSig = "function exists() public view returns (bool)";
+ var fnExistsIface = [fnExistsSig];
+diff --git a/node_modules/cofhejs/dist/web.js b/node_modules/cofhejs/dist/web.js
+index 3cef1c2..d686d7a 100644
+--- a/node_modules/cofhejs/dist/web.js
++++ b/node_modules/cofhejs/dist/web.js
+@@ -23714,8 +23714,8 @@ var MAX_UINT128 = 340282366920938463463374607431768211455n;
+ var MAX_UINT256 = 115792089237316195423570985008687907853269984665640564039457584007913129640319n;
+ var PUBLIC_KEY_LENGTH_MIN = 15e3;
+ var TaskManagerAddress = "0xeA30c4B8b44078Bbf8a6ef5b9f1eC1626C7848D9";
+-var MockZkVerifierAddress = "0x0000000000000000000000000000000000000100";
+-var MockQueryDecrypterAddress = "0x0000000000000000000000000000000000000200";
++var MockZkVerifierAddress = "0x1000000000000000000000000000000000000100";
++var MockQueryDecrypterAddress = "0x2000000000000000000000000000000000000200";
+ var MockZkVerifierSignerPkey = "0x6c8d7f768a6bb4aafe85e8a2f5a9680355239c7e14646ed62b044e39de154512";
+ var fnExistsSig = "function exists() public view returns (bool)";
+ var fnExistsIface = [fnExistsSig];
+diff --git a/node_modules/cofhejs/src/core/utils/consts.ts b/node_modules/cofhejs/src/core/utils/consts.ts
+index 4151a6a..b4011ea 100644
+--- a/node_modules/cofhejs/src/core/utils/consts.ts
++++ b/node_modules/cofhejs/src/core/utils/consts.ts
+@@ -16,9 +16,9 @@ export const DEFAULT_COFHE_URL = "http://127.0.0.1";
+ // Addresses
+ export const TaskManagerAddress = "0xeA30c4B8b44078Bbf8a6ef5b9f1eC1626C7848D9";
+ export const MockZkVerifierAddress =
+-  "0x0000000000000000000000000000000000000100";
++  "0x1000000000000000000000000000000000000100";
+ export const MockQueryDecrypterAddress =
+-  "0x0000000000000000000000000000000000000200";
++  "0x2000000000000000000000000000000000000200";
+ export const MockZkVerifierSignerPkey =
+   "0x6c8d7f768a6bb4aafe85e8a2f5a9680355239c7e14646ed62b044e39de154512";
+ 
