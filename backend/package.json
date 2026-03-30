@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "bot:mm": "node src/bots/marketMaker.js",
     "test": "jest"
   },
   "dependencies": {

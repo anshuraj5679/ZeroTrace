@@ -10,10 +10,14 @@ export type PairConfig = {
   quote: TokenConfig;
 };
 
-const zeth = (process.env.NEXT_PUBLIC_ZETH_ADDRESS ||
-  "0x0000000000000000000000000000000000000000") as `0x${string}`;
-const zusdc = (process.env.NEXT_PUBLIC_ZUSDC_ADDRESS ||
-  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
+export function isZeroAddress(address: string) {
+  return address.toLowerCase() === ZERO_ADDRESS;
+}
+
+const zeth = (process.env.NEXT_PUBLIC_ZETH_ADDRESS || ZERO_ADDRESS) as `0x${string}`;
+const zusdc = (process.env.NEXT_PUBLIC_ZUSDC_ADDRESS || ZERO_ADDRESS) as `0x${string}`;
 
 export const tokenCatalog = {
   ZETH: {
@@ -35,4 +39,3 @@ export const tradingPairs: PairConfig[] = [
     quote: tokenCatalog.ZUSDC
   }
 ];
-

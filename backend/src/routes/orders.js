@@ -1,6 +1,6 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
-const { getAddress } = require("ethers");
+const { getAddress, formatUnits: formatTokenUnits } = require("ethers");
 
 const { cancelOrderSchema, submitOrderSchema, walletQuerySchema } = require("../models/order");
 const redisService = require("../services/redisService");
@@ -26,8 +26,8 @@ function quoteForBase(baseAmountRaw, limitPriceRaw, baseTokenDecimals) {
   ).toString();
 }
 
-function formatUnits(rawValue, decimals) {
-  return Number(rawValue) / 10 ** decimals;
+function formatDisplayUnits(rawValue, decimals) {
+  return formatTokenUnits(BigInt(rawValue), decimals);
 }
 
 function sanitizeOrder(order) {
@@ -87,9 +87,9 @@ router.post("/submit", submitLimiter, verifySignature, async (req, res, next) =>
       reservedQuoteRaw: payload.isBuy
         ? quoteForBase(payload.baseAmount, payload.limitPrice, baseTokenDecimals)
         : "0",
-      displayBaseAmount: formatUnits(payload.baseAmount, baseTokenDecimals),
-      displayRemainingBase: formatUnits(payload.baseAmount, baseTokenDecimals),
-      displayLimitPrice: formatUnits(payload.limitPrice, quoteTokenDecimals),
+      displayBaseAmount: formatDisplayUnits(payload.baseAmount, baseTokenDecimals),
+      displayRemainingBase: formatDisplayUnits(payload.baseAmount, baseTokenDecimals),
+      displayLimitPrice: formatDisplayUnits(payload.limitPrice, quoteTokenDecimals),
       isBuy: payload.isBuy,
       status: "pending",
       timestamp,
@@ -99,7 +99,7 @@ router.post("/submit", submitLimiter, verifySignature, async (req, res, next) =>
       quoteTokenDecimals
     };
 
-    await redisService.setOrder(payload.orderId, encryptPayload(order), 3600);
+    await redisService.setOrder(payload.orderId, encryptPayload(order));
     await redisService.addToPendingSet(tokenBase, tokenQuote, payload.isBuy, payload.orderId);
     await redisService.addWalletOrder(walletAddress, payload.orderId);
 
@@ -186,7 +186,7 @@ router.post("/cancel", verifySignature, async (req, res, next) => {
     order.txHash = payload.txHash;
     order.cancelledAt = new Date().toISOString();
 
-    await redisService.setOrder(payload.orderId, encryptPayload(order), 3600);
+    await redisService.setOrder(payload.orderId, encryptPayload(order));
     await redisService.removeFromPendingSet(
       order.tokenBase,
       order.tokenQuote,

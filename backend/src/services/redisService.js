@@ -35,7 +35,12 @@ async function connect() {
   return client;
 }
 
-async function setOrder(orderId, encryptedData, ttl = 3600) {
+async function setOrder(orderId, encryptedData, ttl) {
+  if (ttl == null) {
+    await ensureClient().set(`order:${orderId}`, encryptedData);
+    return;
+  }
+
   await ensureClient().set(`order:${orderId}`, encryptedData, { EX: ttl });
 }
 

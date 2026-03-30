@@ -75,6 +75,7 @@ contract ZeroTrace is Ownable, ReentrancyGuard {
     error InvalidMatch();
     error OrderClosed();
     error OrderCancelledAlready();
+    error MatchNotCrossed();
 
     modifier onlyOperator() {
         if (msg.sender != operator) {
@@ -152,9 +153,17 @@ contract ZeroTrace is Ownable, ReentrancyGuard {
     function executeMatch(
         bytes32 buyOrderId,
         bytes32 sellOrderId,
+        bool crossed,
         bool buyFilled,
         bool sellFilled
     ) external onlyOperator nonReentrant {
+        if (!crossed) {
+            revert MatchNotCrossed();
+        }
+        if (!buyFilled && !sellFilled) {
+            revert InvalidMatch();
+        }
+
         bytes32 tradeKey = getTradeKey(buyOrderId, sellOrderId);
         if (executedTrades[tradeKey]) {
             revert InvalidMatch();
@@ -183,16 +192,10 @@ contract ZeroTrace is Ownable, ReentrancyGuard {
             revert OrderClosed();
         }
 
-        ebool crossed = FHE.gte(buyOrder.limitPrice, sellOrder.limitPrice);
-        euint128 matchedBase = FHE.select(
-            crossed,
-            FHE.min(buyOrder.remainingBase, sellOrder.remainingBase),
-            FHE.asEuint128(0)
-        );
-        euint128 settlementPrice = FHE.select(
-            crossed,
-            FHE.div(FHE.add(buyOrder.limitPrice, sellOrder.limitPrice), FHE.asEuint128(2)),
-            FHE.asEuint128(0)
+        euint128 matchedBase = FHE.min(buyOrder.remainingBase, sellOrder.remainingBase);
+        euint128 settlementPrice = FHE.div(
+            FHE.add(buyOrder.limitPrice, sellOrder.limitPrice),
+            FHE.asEuint128(2)
         );
         euint128 quoteSpent = _quoteForBase(
             matchedBase,

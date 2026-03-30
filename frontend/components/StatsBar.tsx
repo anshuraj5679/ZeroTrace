@@ -21,6 +21,12 @@ function formatCompactNumber(value: number) {
   }).format(value);
 }
 
+const accentColors = [
+  { border: "border-t-cyan", glow: "group-hover:shadow-glow" },
+  { border: "border-t-purple", glow: "group-hover:shadow-glow-purple" },
+  { border: "border-t-electric", glow: "group-hover:shadow-glow" }
+];
+
 export function StatsBar() {
   const [stats, setStats] = useState<MarketStats>(defaultStats);
 
@@ -50,22 +56,32 @@ export function StatsBar() {
   }, []);
 
   const items = [
-    { label: "Active Orders", value: stats.activeOrders.toString() },
-    { label: "Volume 24H", value: `$${formatCompactNumber(stats.totalVolume24h)}` },
-    { label: "Trades Today", value: stats.totalTrades24h.toString() }
+    { label: "Active Orders", value: stats.activeOrders.toString(), icon: "⚡" },
+    { label: "Volume 24H", value: `$${formatCompactNumber(stats.totalVolume24h)}`, icon: "📊" },
+    { label: "Trades Today", value: stats.totalTrades24h.toString(), icon: "🔄" }
   ];
 
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      {items.map((item) => (
-        <div key={item.label} className="terminal-card rounded-sharp px-4 py-4 scanline">
-          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-muted">
-            {item.label}
-          </p>
-          <p className="mt-3 font-mono text-2xl text-cyan">{item.value}</p>
-        </div>
-      ))}
+      {items.map((item, index) => {
+        const accent = accentColors[index % accentColors.length];
+        return (
+          <div
+            key={item.label}
+            className={`group glass-card ${accent.border} border-t-2 p-4 transition-all duration-300 ${accent.glow}`}
+          >
+            <div className="flex items-center justify-between">
+              <p className="font-[var(--font-mono)] text-[10px] uppercase tracking-[0.28em] text-muted">
+                {item.label}
+              </p>
+              <span className="text-sm opacity-60">{item.icon}</span>
+            </div>
+            <p className="mt-3 font-[var(--font-mono)] text-2xl font-bold text-text-bright glow-text">
+              {item.value}
+            </p>
+          </div>
+        );
+      })}
     </div>
   );
 }
-

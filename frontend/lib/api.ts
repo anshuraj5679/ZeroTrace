@@ -20,7 +20,7 @@ export type OrderStatus = {
   tokenIn: string;
   tokenOut: string;
   pair: string;
-  amount: number;
+  amount: string;
   isBuy: boolean;
   timestamp: string;
   txHash: string | null;
@@ -117,7 +117,7 @@ export async function cancelOrder(payload: CancelOrderPayload) {
 }
 
 export async function getMyOrders(wallet: string) {
-  return request<OrderStatus[]>(`/api/v1/order/my-orders?wallet=${wallet}`);
+  return request<OrderStatus[]>(`/api/v1/order/my-orders?wallet=${encodeURIComponent(wallet)}`);
 }
 
 export async function getTradeHistory(wallet?: string) {

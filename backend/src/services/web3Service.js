@@ -4,7 +4,7 @@ const { Contract, JsonRpcProvider, Wallet } = require("ethers");
 
 const zeroTraceAbi = [
   "function getOrder(bytes32 orderId) view returns (address trader, address tokenBase, address tokenQuote, bool isBuy, bool cancelled, bool closed, uint8 baseTokenDecimals, uint256 timestamp)",
-  "function executeMatch(bytes32 buyOrderId, bytes32 sellOrderId, bool buyFilled, bool sellFilled)"
+  "function executeMatch(bytes32 buyOrderId, bytes32 sellOrderId, bool crossed, bool buyFilled, bool sellFilled)"
 ];
 
 let provider;
@@ -99,11 +99,12 @@ async function getOrder(orderId) {
   });
 }
 
-async function executeMatch(buyOrderId, sellOrderId, buyFilled, sellFilled) {
+async function executeMatch(buyOrderId, sellOrderId, crossed, buyFilled, sellFilled) {
   return withRetry(async () => {
     const tx = await getWriteContract().executeMatch(
       buyOrderId,
       sellOrderId,
+      crossed,
       buyFilled,
       sellFilled
     );

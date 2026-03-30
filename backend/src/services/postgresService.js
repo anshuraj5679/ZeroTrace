@@ -2,6 +2,36 @@ const { Pool } = require("pg");
 
 let pool;
 
+function parseDatabaseUrl() {
+  const connectionString = process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    throw new Error("Missing DATABASE_URL.");
+  }
+
+  const parsed = new URL(connectionString);
+  const hostname = parsed.hostname;
+  const sslMode = (parsed.searchParams.get("sslmode") || "").toLowerCase();
+  const isSupabaseHost =
+    hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com");
+  const normalized = new URL(connectionString);
+
+  // Let the explicit `ssl` option control TLS behavior instead of `pg` re-parsing
+  // `sslmode` from the URL and overriding it.
+  normalized.searchParams.delete("sslmode");
+
+  return {
+    connectionString: normalized.toString(),
+    hostname,
+    ssl:
+      sslMode === "disable"
+        ? false
+        : sslMode === "require" || isSupabaseHost
+          ? { rejectUnauthorized: false }
+          : undefined
+  };
+}
+
 const schemaSql = `
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
@@ -42,12 +72,27 @@ async function connect() {
     return pool;
   }
 
+  const { connectionString, hostname, ssl } = parseDatabaseUrl();
   pool = new Pool({
-    connectionString: process.env.DATABASE_URL
+    connectionString,
+    ssl
   });
 
-  await pool.query("SELECT 1");
-  await pool.query(schemaSql);
+  try {
+    await pool.query("SELECT 1");
+    await pool.query(schemaSql);
+  } catch (error) {
+    await pool.end().catch(() => undefined);
+    pool = undefined;
+
+    if (error?.code === "ENOENT" || error?.code === "ENOTFOUND") {
+      throw new Error(
+        `Unable to resolve PostgreSQL host "${hostname}". Check your DATABASE_URL / Supabase host.`
+      );
+    }
+
+    throw error;
+  }
 
   return pool;
 }
@@ -70,4 +115,3 @@ module.exports = {
   healthCheck,
   query
 };
-

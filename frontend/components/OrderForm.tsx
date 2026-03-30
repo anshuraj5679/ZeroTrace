@@ -1,10 +1,10 @@
 "use client";
 
-import { Contract, parseUnits } from "ethers";
-import { useState } from "react";
+import { Contract, Interface, parseUnits } from "ethers";
+import { useEffect, useState } from "react";
 import { useAccount, useSignMessage } from "wagmi";
 
-import { submitOrder } from "@/lib/api";
+import { submitOrder, type SubmitOrderPayload } from "@/lib/api";
 import {
   buildOrderId,
   encryptUint128,
@@ -13,7 +13,7 @@ import {
   quoteForBase
 } from "@/lib/cofhe";
 import { privateTokenAbi, zeroTraceAbi } from "@/lib/contracts";
-import { tradingPairs } from "@/lib/tokens";
+import { isZeroAddress, tradingPairs } from "@/lib/tokens";
 
 type SubmissionState =
   | "idle"
@@ -26,10 +26,20 @@ type SubmissionState =
 
 const zeroTraceAddress = (process.env.NEXT_PUBLIC_ZEROTRACE_CONTRACT_ADDRESS ||
   "0x0000000000000000000000000000000000000000") as `0x${string}`;
+const pendingOrderStorageKey = "zerotrace.pendingOrderSync";
+
+type PendingOrderSync = Omit<SubmitOrderPayload, "signature" | "nonce" | "timestamp">;
 
 function buildAuthMessage(nonce: string, timestamp: number) {
   return `ZeroTrace Order Request\nNonce: ${nonce}\nTimestamp: ${timestamp}`;
 }
+
+const statusLabels: Record<string, string> = {
+  funding: "Minting…",
+  approving: "Approving…",
+  submitting: "Submitting…",
+  syncing: "Syncing…"
+};
 
 export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const { address, isConnected } = useAccount();
@@ -43,12 +53,38 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const [message, setMessage] = useState("");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [cofheReady, setCofheReady] = useState(false);
+  const [pendingOrderSync, setPendingOrderSync] = useState<PendingOrderSync | null>(null);
 
   const pair = tradingPairs.find((entry) => entry.id === pairId) ?? tradingPairs[0];
 
   if (!pair) {
     return null;
   }
+
+  useEffect(() => {
+    if (!address || typeof window === "undefined") {
+      return;
+    }
+
+    const serialized = window.localStorage.getItem(pendingOrderStorageKey);
+    if (!serialized) {
+      return;
+    }
+
+    try {
+      const saved = JSON.parse(serialized) as PendingOrderSync;
+      if (saved.walletAddress.toLowerCase() !== address.toLowerCase()) {
+        return;
+      }
+
+      setPendingOrderSync(saved);
+      setTxHash(saved.txHash);
+      setStatus("error");
+      setMessage("Found an on-chain order that still needs API sync. Click Retry Order Sync.");
+    } catch {
+      window.localStorage.removeItem(pendingOrderStorageKey);
+    }
+  }, [address]);
 
   async function withSigner() {
     const { signer } = await initializeCofhe();
@@ -73,12 +109,104 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
     };
   }
 
+  function assertConfiguredContracts() {
+    if (
+      isZeroAddress(zeroTraceAddress) ||
+      isZeroAddress(pair.base.address) ||
+      isZeroAddress(pair.quote.address)
+    ) {
+      throw new Error("Contract addresses are not configured in frontend/.env.local.");
+    }
+  }
+
+  function savePendingOrderSync(payload: PendingOrderSync) {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(pendingOrderStorageKey, JSON.stringify(payload));
+  }
+
+  function clearPendingOrderSync() {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(pendingOrderStorageKey);
+    }
+
+    setPendingOrderSync(null);
+  }
+
+  async function syncPendingOrder(payload: PendingOrderSync) {
+    const nonce = crypto.randomUUID();
+    const authTimestamp = Date.now();
+    const signature = await signMessageAsync({
+      message: buildAuthMessage(nonce, authTimestamp)
+    });
+
+    await submitOrder({
+      ...payload,
+      signature,
+      nonce,
+      timestamp: authTimestamp
+    });
+
+    clearPendingOrderSync();
+    setStatus("success");
+    setMessage("Order submitted. Waiting for match.");
+    setAmount("");
+    setPrice("");
+    onSubmitted?.();
+  }
+
+  async function buildPendingOrderFromTransaction(hash: string): Promise<PendingOrderSync> {
+    if (!address) {
+      throw new Error("Connect a wallet before retrying sync.");
+    }
+
+    const { baseAmountRaw, limitPriceRaw } = parseOrderValues();
+    const signer = await withSigner();
+    const provider = signer.provider;
+
+    if (!provider) {
+      throw new Error("Wallet provider not available.");
+    }
+
+    const transaction = await provider.getTransaction(hash);
+    if (!transaction) {
+      throw new Error("Unable to load the order transaction.");
+    }
+
+    const contractInterface = new Interface(zeroTraceAbi);
+    const parsed = contractInterface.parseTransaction({
+      data: transaction.data,
+      value: transaction.value
+    });
+
+    if (!parsed || parsed.name !== "submitOrder") {
+      throw new Error("Transaction is not a ZeroTrace order submit.");
+    }
+
+    const [orderId, tokenBase, tokenQuote, _encryptedBaseAmount, _encryptedLimitPrice, isBuy] =
+      parsed.args;
+
+    return {
+      walletAddress: address,
+      orderId,
+      txHash: hash,
+      tokenBase,
+      tokenQuote,
+      baseAmount: baseAmountRaw.toString(),
+      limitPrice: limitPriceRaw.toString(),
+      isBuy
+    };
+  }
+
   async function handleMintDemoBalance() {
     try {
       if (!isConnected || !address || !pair) {
         throw new Error("Connect a wallet first.");
       }
 
+      assertConfiguredContracts();
       const signer = await withSigner();
       const token = side === "buy" ? pair.quote : pair.base;
       const demoAmount =
@@ -111,6 +239,7 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
         throw new Error("Connect a wallet before approving.");
       }
 
+      assertConfiguredContracts();
       const { baseAmountRaw, limitPriceRaw } = parseOrderValues();
       const approvalAmount =
         side === "buy"
@@ -141,9 +270,10 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
         throw new Error("Connect a wallet before submitting an order.");
       }
 
+      assertConfiguredContracts();
       const { baseAmountRaw, limitPriceRaw } = parseOrderValues();
       const nonce = crypto.randomUUID();
-      const timestamp = Date.now();
+      const orderTimestamp = Date.now();
       const orderId = buildOrderId(
         address,
         pair.base.address,
@@ -152,7 +282,7 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
         limitPriceRaw,
         side === "buy",
         nonce,
-        timestamp
+        orderTimestamp
       );
 
       const signer = await withSigner();
@@ -174,12 +304,7 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
       setTxHash(tx.hash);
       await tx.wait();
 
-      setStatus("syncing");
-      const signature = await signMessageAsync({
-        message: buildAuthMessage(nonce, timestamp)
-      });
-
-      await submitOrder({
+      const pendingSyncPayload: PendingOrderSync = {
         walletAddress: address,
         orderId,
         txHash: tx.hash,
@@ -187,57 +312,83 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
         tokenQuote: pair.quote.address,
         baseAmount: baseAmountRaw.toString(),
         limitPrice: limitPriceRaw.toString(),
-        isBuy: side === "buy",
-        signature,
-        nonce,
-        timestamp
-      });
+        isBuy: side === "buy"
+      };
 
-      setStatus("success");
-      setMessage("Order submitted. Waiting for match.");
-      setAmount("");
-      setPrice("");
-      onSubmitted?.();
+      setPendingOrderSync(pendingSyncPayload);
+      savePendingOrderSync(pendingSyncPayload);
+
+      setStatus("syncing");
+      await syncPendingOrder(pendingSyncPayload);
     } catch (error) {
       setStatus("error");
       setMessage(
-        error instanceof Error
-          ? error.message
-          : "Order submission failed."
+        error instanceof Error ? error.message : "Order submission failed."
       );
     }
   }
 
+  async function handleRetryOrderSync() {
+    try {
+      const nextPendingOrder =
+        pendingOrderSync || (txHash ? await buildPendingOrderFromTransaction(txHash) : null);
+
+      if (!nextPendingOrder) {
+        throw new Error("No on-chain order found to sync.");
+      }
+
+      setPendingOrderSync(nextPendingOrder);
+      savePendingOrderSync(nextPendingOrder);
+      setTxHash(nextPendingOrder.txHash);
+      setStatus("syncing");
+      await syncPendingOrder(nextPendingOrder);
+    } catch (error) {
+      setStatus("error");
+      setMessage(
+        error instanceof Error ? error.message : "Unable to sync the on-chain order."
+      );
+    }
+  }
+
+  const isProcessing = ["funding", "approving", "submitting", "syncing"].includes(status);
+  const canRetryOrderSync = Boolean(pendingOrderSync || (status === "error" && txHash));
+
   return (
-    <section className="terminal-card rounded-sharp p-5 scanline">
+    <section className="glass-card glass-card-accent relative overflow-hidden p-5">
+      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-muted">
+          <p className="font-[var(--font-mono)] text-[10px] uppercase tracking-[0.3em] text-muted">
             New Order
           </p>
-          <h2 className="mt-2 font-[var(--font-heading)] text-3xl text-text">
+          <h2 className="mt-1.5 text-lg font-semibold text-text-bright">
             Submit Encrypted Order
           </h2>
         </div>
-        <div className="rounded-sharp border border-border px-3 py-2 font-mono text-[11px] uppercase tracking-[0.2em] text-cyan">
-          {cofheReady ? "CoFHE Direct" : "CoFHE Wallet"}
+        <div className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5">
+          <span className={`h-1.5 w-1.5 rounded-full ${cofheReady ? "bg-buy" : "bg-amber"}`} />
+          <span className="font-[var(--font-mono)] text-[10px] uppercase tracking-[0.18em] text-muted">
+            {cofheReady ? "CoFHE Ready" : "CoFHE Wallet"}
+          </span>
         </div>
       </div>
 
-      <div className="mt-3 rounded-sharp border border-border bg-elevated/70 px-4 py-3 text-sm text-muted">
-        Orders are encrypted in your wallet, submitted directly on-chain, and only indexed by the API after the
-        transaction confirms.
+      {/* Info Banner */}
+      <div className="mt-4 rounded-lg border border-white/[0.04] bg-white/[0.02] px-4 py-2.5 text-xs leading-relaxed text-muted">
+        Orders are encrypted in your wallet, submitted directly on-chain, and only indexed by the API after confirmation.
       </div>
 
-      <div className="mt-6 grid gap-4">
-        <label className="grid gap-2">
-          <span className="font-mono text-xs uppercase tracking-[0.24em] text-muted">
+      {/* Form Fields */}
+      <div className="mt-5 grid gap-4">
+        {/* Pair Selector */}
+        <label className="grid gap-1.5">
+          <span className="font-[var(--font-mono)] text-[10px] uppercase tracking-[0.24em] text-muted">
             Pair
           </span>
           <select
             value={pairId}
             onChange={(event) => setPairId(event.target.value)}
-            className="rounded-sharp border border-border bg-elevated px-3 py-3 outline-none transition focus:border-cyan"
+            className="input-glass cursor-pointer"
           >
             {tradingPairs.map((entry) => (
               <option key={entry.id} value={entry.id}>
@@ -247,14 +398,15 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
           </select>
         </label>
 
-        <div className="grid grid-cols-2 gap-2">
+        {/* Buy / Sell Toggle */}
+        <div className="relative grid grid-cols-2 gap-0 rounded-lg border border-white/[0.06] bg-white/[0.02] p-1">
           <button
             type="button"
             onClick={() => setSide("buy")}
-            className={`rounded-sharp border px-4 py-3 font-mono text-sm uppercase tracking-[0.25em] ${
+            className={`relative z-10 rounded-md px-4 py-2.5 font-[var(--font-mono)] text-xs uppercase tracking-[0.25em] transition-all duration-250 ${
               side === "buy"
-                ? "border-buy bg-buy/10 text-buy shadow-glow"
-                : "border-border bg-elevated text-muted"
+                ? "bg-buy/15 text-buy shadow-glow-buy border border-buy/30"
+                : "text-muted hover:text-text border border-transparent"
             }`}
           >
             Buy
@@ -262,49 +414,53 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
           <button
             type="button"
             onClick={() => setSide("sell")}
-            className={`rounded-sharp border px-4 py-3 font-mono text-sm uppercase tracking-[0.25em] ${
+            className={`relative z-10 rounded-md px-4 py-2.5 font-[var(--font-mono)] text-xs uppercase tracking-[0.25em] transition-all duration-250 ${
               side === "sell"
-                ? "border-sell bg-sell/10 text-sell shadow-glow"
-                : "border-border bg-elevated text-muted"
+                ? "bg-sell/15 text-sell shadow-glow-sell border border-sell/30"
+                : "text-muted hover:text-text border border-transparent"
             }`}
           >
             Sell
           </button>
         </div>
 
-        <label className="grid gap-2">
-          <span className="font-mono text-xs uppercase tracking-[0.24em] text-muted">
+        {/* Amount */}
+        <label className="grid gap-1.5">
+          <span className="font-[var(--font-mono)] text-[10px] uppercase tracking-[0.24em] text-muted">
             Amount ({pair.base.symbol})
           </span>
           <input
             value={amount}
             onChange={(event) => setAmount(event.target.value)}
             placeholder="0.10"
-            className="rounded-sharp border border-border bg-elevated px-3 py-3 outline-none transition focus:border-cyan"
+            className="input-glass"
           />
         </label>
 
-        <label className="grid gap-2">
-          <span className="font-mono text-xs uppercase tracking-[0.24em] text-muted">
+        {/* Limit Price */}
+        <label className="grid gap-1.5">
+          <span className="font-[var(--font-mono)] text-[10px] uppercase tracking-[0.24em] text-muted">
             Limit Price ({pair.quote.symbol})
           </span>
           <input
             value={price}
             onChange={(event) => setPrice(event.target.value)}
             placeholder="2400"
-            className="rounded-sharp border border-border bg-elevated px-3 py-3 outline-none transition focus:border-cyan"
+            className="input-glass"
           />
         </label>
       </div>
 
-      <div className="mt-6 grid gap-3">
+      {/* Action Buttons */}
+      <div className="mt-6 grid gap-2.5">
         <button
           type="button"
           onClick={handleMintDemoBalance}
-          className="rounded-sharp border border-border bg-elevated px-4 py-3 font-mono text-xs uppercase tracking-[0.3em] text-text transition hover:border-cyan hover:text-cyan"
+          disabled={isProcessing}
+          className="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {status === "funding"
-            ? "Minting..."
+            ? "Minting…"
             : side === "buy"
               ? `Mint Private ${pair.quote.symbol}`
               : `Mint Private ${pair.base.symbol}`}
@@ -313,10 +469,11 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
         <button
           type="button"
           onClick={handleApprove}
-          className="rounded-sharp border border-border bg-elevated px-4 py-3 font-mono text-xs uppercase tracking-[0.3em] text-text transition hover:border-cyan hover:text-cyan"
+          disabled={isProcessing}
+          className="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {status === "approving"
-            ? "Approving..."
+            ? "Approving…"
             : side === "buy"
               ? `Approve ${pair.quote.symbol}`
               : `Approve ${pair.base.symbol}`}
@@ -325,27 +482,36 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
         <button
           type="button"
           onClick={handleSubmit}
-          className="rounded-sharp border border-cyan bg-cyan px-4 py-4 font-mono text-xs uppercase tracking-[0.35em] text-black transition hover:shadow-glow"
+          disabled={isProcessing}
+          className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {status === "submitting"
-            ? "Submitting..."
-            : status === "syncing"
-              ? "Syncing..."
-              : "Submit Order"}
+          {statusLabels[status] || "Submit Order"}
         </button>
+
+        {canRetryOrderSync ? (
+          <button
+            type="button"
+            onClick={handleRetryOrderSync}
+            disabled={isProcessing}
+            className="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Retry Order Sync
+          </button>
+        ) : null}
       </div>
 
+      {/* Status Message */}
       {message ? (
         <div
-          className={`mt-4 rounded-sharp border px-4 py-3 text-sm ${
+          className={`mt-4 animate-slide-in rounded-lg border px-4 py-3 text-sm ${
             status === "error"
-              ? "border-sell/60 bg-sell/10 text-sell"
-              : "border-cyan/40 bg-cyan/10 text-text"
+              ? "border-sell/30 bg-sell/5 text-sell"
+              : "border-cyan/20 bg-cyan/5 text-text"
           }`}
         >
           <p>{message}</p>
           {txHash ? (
-            <p className="mt-2 break-all font-mono text-xs text-muted">{txHash}</p>
+            <p className="mt-1.5 break-all font-[var(--font-mono)] text-[11px] text-muted">{txHash}</p>
           ) : null}
         </div>
       ) : null}

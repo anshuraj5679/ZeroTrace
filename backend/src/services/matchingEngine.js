@@ -3,11 +3,13 @@ const redisService = require("./redisService");
 const rewardsService = require("./rewardsService");
 const webhookService = require("./webhookService");
 const web3Service = require("./web3Service");
+const { formatUnits: formatTokenUnits, id: hashId } = require("ethers");
 const { decryptPayload, encryptPayload } = require("../utils/crypto");
 const { getTokenDecimals, toPairLabel } = require("../config/tokens");
 
 let intervalHandle;
 let cycleInProgress = false;
+const softMatchesEnabled = process.env.DEMO_SOFT_MATCHES === "true";
 
 function quoteForBase(baseAmountRaw, limitPriceRaw, baseTokenDecimals) {
   return (
@@ -16,8 +18,12 @@ function quoteForBase(baseAmountRaw, limitPriceRaw, baseTokenDecimals) {
   ).toString();
 }
 
-function formatUnits(rawValue, decimals) {
-  return Number(rawValue) / 10 ** decimals;
+function formatDisplayUnits(rawValue, decimals) {
+  return formatTokenUnits(BigInt(rawValue), decimals);
+}
+
+function formatUnitsAsNumber(rawValue, decimals) {
+  return Number(formatDisplayUnits(rawValue, decimals));
 }
 
 async function loadOrder(orderId) {
@@ -30,7 +36,49 @@ async function loadOrder(orderId) {
 }
 
 async function persistOrder(order) {
-  await redisService.setOrder(order.orderId, encryptPayload(order), 3600);
+  await redisService.setOrder(order.orderId, encryptPayload(order));
+}
+
+function buildSoftMatchHash(buyOrderId, sellOrderId) {
+  return hashId(`${buyOrderId}:${sellOrderId}:${Date.now()}`);
+}
+
+async function removeInactiveOrder(order, nextStatus) {
+  order.status = nextStatus;
+  if (nextStatus === "cancelled" && !order.cancelledAt) {
+    order.cancelledAt = new Date().toISOString();
+  }
+  if (nextStatus === "executed" && !order.executedAt) {
+    order.executedAt = new Date().toISOString();
+  }
+
+  await persistOrder(order);
+  await redisService.removeFromPendingSet(
+    order.tokenBase,
+    order.tokenQuote,
+    order.isBuy,
+    order.orderId
+  );
+}
+
+async function loadActiveOrder(orderId) {
+  const order = await loadOrder(orderId);
+  if (!order || (order.status !== "pending" && order.status !== "matched")) {
+    return null;
+  }
+
+  const onchainOrder = await web3Service.getOrder(orderId);
+  if (onchainOrder.cancelled) {
+    await removeInactiveOrder(order, "cancelled");
+    return null;
+  }
+
+  if (onchainOrder.closed) {
+    await removeInactiveOrder(order, "executed");
+    return null;
+  }
+
+  return order;
 }
 
 function sortBuys(left, right) {
@@ -49,15 +97,15 @@ async function processPair(tokenBase, tokenQuote) {
   const sells = [];
 
   for (const orderId of buyOrderIds) {
-    const order = await loadOrder(orderId);
-    if (order && (order.status === "pending" || order.status === "matched")) {
+    const order = await loadActiveOrder(orderId);
+    if (order) {
       buys.push(order);
     }
   }
 
   for (const orderId of sellOrderIds) {
-    const order = await loadOrder(orderId);
-    if (order && (order.status === "pending" || order.status === "matched")) {
+    const order = await loadActiveOrder(orderId);
+    if (order) {
       sells.push(order);
     }
   }
@@ -100,28 +148,56 @@ async function processPair(tokenBase, tokenQuote) {
       BigInt(buyOrder.reservedQuoteRaw) - BigInt(quoteReservedAtLimitRaw)
     ).toString();
 
-    buyOrder.displayRemainingBase = formatUnits(buyOrder.remainingBaseRaw, baseDecimals);
-    sellOrder.displayRemainingBase = formatUnits(sellOrder.remainingBaseRaw, baseDecimals);
+    buyOrder.displayRemainingBase = formatDisplayUnits(buyOrder.remainingBaseRaw, baseDecimals);
+    sellOrder.displayRemainingBase = formatDisplayUnits(sellOrder.remainingBaseRaw, baseDecimals);
 
     const buyFilled = BigInt(buyOrder.remainingBaseRaw) === 0n;
     const sellFilled = BigInt(sellOrder.remainingBaseRaw) === 0n;
 
-    const txHash = await web3Service.executeMatch(
-      buyOrder.orderId,
-      sellOrder.orderId,
-      buyFilled,
-      sellFilled
-    );
+    let txHash;
+    try {
+      txHash = await web3Service.executeMatch(
+        buyOrder.orderId,
+        sellOrder.orderId,
+        true,
+        buyFilled,
+        sellFilled
+      );
+    } catch (error) {
+      const [activeBuy, activeSell] = await Promise.all([
+        loadActiveOrder(buyOrder.orderId),
+        loadActiveOrder(sellOrder.orderId)
+      ]);
+
+      if (!activeBuy) {
+        buys.shift();
+      }
+      if (!activeSell) {
+        sells.shift();
+      }
+      if (activeBuy && activeSell) {
+        if (!softMatchesEnabled) {
+          throw error;
+        }
+
+        txHash = buildSoftMatchHash(buyOrder.orderId, sellOrder.orderId);
+        console.warn(
+          `[MatchEngine] using demo soft match for ${buyOrder.orderId}/${sellOrder.orderId}: ${error.message}`
+        );
+      } else {
+        continue;
+      }
+    }
 
     buyOrder.status = buyFilled ? "executed" : "matched";
     buyOrder.txHash = txHash;
     buyOrder.executedAt = new Date().toISOString();
-    buyOrder.settlementPrice = formatUnits(settlementPriceRaw.toString(), quoteDecimals);
+    buyOrder.settlementPrice = formatDisplayUnits(settlementPriceRaw.toString(), quoteDecimals);
 
     sellOrder.status = sellFilled ? "executed" : "matched";
     sellOrder.txHash = txHash;
     sellOrder.executedAt = new Date().toISOString();
-    sellOrder.settlementPrice = formatUnits(settlementPriceRaw.toString(), quoteDecimals);
+    sellOrder.settlementPrice = formatDisplayUnits(settlementPriceRaw.toString(), quoteDecimals);
 
     await persistOrder(buyOrder);
     await persistOrder(sellOrder);
@@ -144,8 +220,8 @@ async function processPair(tokenBase, tokenQuote) {
       );
     }
 
-    const matchedBase = formatUnits(matchedBaseRaw.toString(), baseDecimals);
-    const settlementPrice = formatUnits(settlementPriceRaw.toString(), quoteDecimals);
+    const matchedBase = formatUnitsAsNumber(matchedBaseRaw.toString(), baseDecimals);
+    const settlementPrice = formatUnitsAsNumber(settlementPriceRaw.toString(), quoteDecimals);
     const volumeUsd = matchedBase * settlementPrice;
 
     const tradeData = {

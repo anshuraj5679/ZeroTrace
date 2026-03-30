@@ -110,7 +110,7 @@ describe("ZeroTrace", function () {
     await expect(
       zeroTrace
         .connect(owner)
-        .executeMatch(buyOrderId, sellOrderId, true, true)
+        .executeMatch(buyOrderId, sellOrderId, true, true, true)
     ).to.emit(zeroTrace, "TradeExecuted");
 
     const buyerZethCt = await zeth.balanceOfEncrypted(buyer.address);
@@ -229,7 +229,7 @@ describe("ZeroTrace", function () {
       );
 
     await expect(
-      zeroTrace.connect(outsider).executeMatch(buyOrderId, sellOrderId, true, true)
+      zeroTrace.connect(outsider).executeMatch(buyOrderId, sellOrderId, true, true, true)
     ).to.be.revertedWithCustomError(zeroTrace, "Unauthorized");
   });
 
@@ -289,10 +289,70 @@ describe("ZeroTrace", function () {
 
     await zeroTrace
       .connect(owner)
-      .executeMatch(buyOrderId, sellOrderId, true, true);
+      .executeMatch(buyOrderId, sellOrderId, true, true, true);
 
     await expect(
-      zeroTrace.connect(owner).executeMatch(buyOrderId, sellOrderId, true, true)
+      zeroTrace.connect(owner).executeMatch(buyOrderId, sellOrderId, true, true, true)
     ).to.be.revertedWithCustomError(zeroTrace, "InvalidMatch");
+  });
+
+  it("rejects non-crossing matches before settlement", async function () {
+    const { owner, buyer, seller, zeroTrace, zusdc, zeth } = await deployFixture();
+    const baseAmount = ethers.parseEther("0.1");
+    const buyPrice = 2_000_000_000n;
+    const sellPrice = 2_100_000_000n;
+    const quoteAmount = 200_000_000n;
+    const buyOrderId = ethers.keccak256(ethers.toUtf8Bytes("buy-order-4"));
+    const sellOrderId = ethers.keccak256(ethers.toUtf8Bytes("sell-order-4"));
+
+    await zusdc
+      .connect(buyer)
+      .mintEncrypted(
+        buyer.address,
+        await encryptUint128(buyer, quoteAmount)
+      );
+    await zeth
+      .connect(seller)
+      .mintEncrypted(
+        seller.address,
+        await encryptUint128(seller, baseAmount)
+      );
+    await zusdc
+      .connect(buyer)
+      .approveEncrypted(
+        await zeroTrace.getAddress(),
+        await encryptUint128(buyer, quoteAmount)
+      );
+    await zeth
+      .connect(seller)
+      .approveEncrypted(
+        await zeroTrace.getAddress(),
+        await encryptUint128(seller, baseAmount)
+      );
+
+    await zeroTrace
+      .connect(buyer)
+      .submitOrder(
+        buyOrderId,
+        await zeth.getAddress(),
+        await zusdc.getAddress(),
+        await encryptUint128(buyer, baseAmount),
+        await encryptUint128(buyer, buyPrice),
+        true
+      );
+    await zeroTrace
+      .connect(seller)
+      .submitOrder(
+        sellOrderId,
+        await zeth.getAddress(),
+        await zusdc.getAddress(),
+        await encryptUint128(seller, baseAmount),
+        await encryptUint128(seller, sellPrice),
+        false
+      );
+
+    await expect(
+      zeroTrace.connect(owner).executeMatch(buyOrderId, sellOrderId, false, true, true)
+    ).to.be.revertedWithCustomError(zeroTrace, "MatchNotCrossed");
   });
 });

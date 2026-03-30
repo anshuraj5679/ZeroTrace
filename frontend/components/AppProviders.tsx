@@ -4,13 +4,22 @@ import "@rainbow-me/rainbowkit/styles.css";
 
 import { RainbowKitProvider } from "@rainbow-me/rainbowkit";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { WagmiProvider } from "wagmi";
 
-import { wagmiConfig } from "@/lib/wagmiConfig";
+import { createWagmiConfig } from "@/lib/wagmiConfig";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
+  const [wagmiConfig, setWagmiConfig] = useState<ReturnType<typeof createWagmiConfig> | null>(null);
+
+  useEffect(() => {
+    setWagmiConfig(createWagmiConfig());
+  }, []);
+
+  if (!wagmiConfig) {
+    return null;
+  }
 
   return (
     <WagmiProvider config={wagmiConfig}>
