@@ -5,15 +5,13 @@ const sections = [
     id: "submit",
     method: "POST",
     route: "/api/v1/order/submit",
-    description: "Register a wallet-submitted CoFHE order after the on-chain transaction confirms.",
+    description: "Register a wallet-submitted CoFHE order after the on-chain transaction confirms. The API only indexes authenticated metadata.",
     request: `{
   "walletAddress": "0x...",
   "orderId": "0x...",
   "txHash": "0x...",
   "tokenBase": "0x...",
   "tokenQuote": "0x...",
-  "baseAmount": "100000000000000000",
-  "limitPrice": "2400000000",
   "isBuy": true,
   "signature": "0x...",
   "nonce": "8f1d...",
@@ -30,13 +28,13 @@ const sections = [
 }`,
     curl: `curl -X POST http://localhost:4000/api/v1/order/submit \\
   -H "Content-Type: application/json" \\
-  -d '{"walletAddress":"0x...","orderId":"0x...","txHash":"0x...","tokenBase":"0x...","tokenQuote":"0x...","baseAmount":"100000000000000000","limitPrice":"2400000000","isBuy":true,"signature":"0x...","nonce":"n-1","timestamp":1720000000000}'`
+  -d '{"walletAddress":"0x...","orderId":"0x...","txHash":"0x...","tokenBase":"0x...","tokenQuote":"0x...","isBuy":true,"signature":"0x...","nonce":"n-1","timestamp":1720000000000}'`
   },
   {
     id: "status",
     method: "GET",
     route: "/api/v1/order/status/:orderId",
-    description: "Fetch a sanitized order status without exposing encrypted price or ciphertext data.",
+    description: "Fetch sanitized order metadata plus ciphertext handles that the trader can decrypt client-side with a permit.",
     request: "{}",
     response: `{
   "success": true,
@@ -44,9 +42,13 @@ const sections = [
     "orderId": "0x...",
     "status": "pending",
     "pair": "ZETH/ZUSDC",
-    "amount": 250,
+    "amount": null,
     "isBuy": true,
-    "timestamp": "2026-03-24T10:00:00.000Z"
+    "timestamp": "2026-03-24T10:00:00.000Z",
+    "remainingBaseHandle": "0xabc123...",
+    "limitPriceHandle": "0xdef456...",
+    "baseTokenDecimals": 18,
+    "quoteTokenDecimals": 6
   }
 }`,
     curl: "curl http://localhost:4000/api/v1/order/status/0x..."
@@ -79,7 +81,7 @@ const sections = [
     id: "my-orders",
     method: "GET",
     route: "/api/v1/order/my-orders?wallet=0x...",
-    description: "List all tracked orders for a wallet.",
+    description: "List all tracked orders for a wallet, including ciphertext handles for permit-authorized view decryption.",
     request: "{}",
     response: `{
   "success": true,
@@ -230,7 +232,8 @@ export default function DocsPage() {
           <h2 className="font-[var(--font-heading)] text-3xl text-text">Authentication</h2>
           <p className="mt-4 leading-7 text-muted">
             ZeroTrace requires a wallet signature for API indexing and cancel synchronization. CoFHE order submission
-            itself happens directly on-chain from the trader wallet. The API signature message format is:
+            itself happens directly on-chain from the trader wallet, and encrypted order reads use client-side permits.
+            The API signature message format is:
             <span className="block rounded-sharp border border-border bg-black p-4 font-mono text-cyan mt-4">
               ZeroTrace Order Request{"\n"}Nonce: {"{nonce}"}{"\n"}Timestamp: {"{timestamp}"}
             </span>

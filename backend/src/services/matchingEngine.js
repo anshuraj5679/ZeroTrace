@@ -3,6 +3,7 @@ const redisService = require("./redisService");
 const rewardsService = require("./rewardsService");
 const webhookService = require("./webhookService");
 const web3Service = require("./web3Service");
+const cofheService = require("./cofheService");
 const { formatUnits: formatTokenUnits, id: hashId } = require("ethers");
 const { decryptPayload, encryptPayload } = require("../utils/crypto");
 const { getTokenDecimals, toPairLabel } = require("../config/tokens");
@@ -36,7 +37,8 @@ async function loadOrder(orderId) {
 }
 
 async function persistOrder(order) {
-  await redisService.setOrder(order.orderId, encryptPayload(order));
+  const { matchState, ...persistedOrder } = order;
+  await redisService.setOrder(order.orderId, encryptPayload(persistedOrder));
 }
 
 function buildSoftMatchHash(buyOrderId, sellOrderId) {
@@ -50,6 +52,9 @@ async function removeInactiveOrder(order, nextStatus) {
   }
   if (nextStatus === "executed" && !order.executedAt) {
     order.executedAt = new Date().toISOString();
+  }
+  if (nextStatus === "empty" && !order.emptyAt) {
+    order.emptyAt = new Date().toISOString();
   }
 
   await persistOrder(order);
@@ -82,11 +87,64 @@ async function loadActiveOrder(orderId) {
 }
 
 function sortBuys(left, right) {
-  return Number(right.limitPriceRaw) - Number(left.limitPriceRaw);
+  if (BigInt(left.matchState.limitPriceRaw) === BigInt(right.matchState.limitPriceRaw)) {
+    return 0;
+  }
+
+  return BigInt(left.matchState.limitPriceRaw) < BigInt(right.matchState.limitPriceRaw) ? 1 : -1;
 }
 
 function sortSells(left, right) {
-  return Number(left.limitPriceRaw) - Number(right.limitPriceRaw);
+  if (BigInt(left.matchState.limitPriceRaw) === BigInt(right.matchState.limitPriceRaw)) {
+    return 0;
+  }
+
+  return BigInt(left.matchState.limitPriceRaw) > BigInt(right.matchState.limitPriceRaw) ? 1 : -1;
+}
+
+async function hydrateMatchState(order) {
+  try {
+    const handles = await web3Service.getOrderCiphertexts(order.orderId);
+    const [remainingBaseResult, limitPriceResult] = await Promise.all([
+      cofheService.decryptUint128ForTx(handles.remainingBase),
+      cofheService.decryptUint128ForTx(handles.limitPrice)
+    ]);
+
+    return {
+      ...order,
+      matchState: {
+        remainingBaseRaw: remainingBaseResult.decryptedValue.toString(),
+        remainingBaseSig: remainingBaseResult.signature,
+        limitPriceRaw: limitPriceResult.decryptedValue.toString(),
+        limitPriceSig: limitPriceResult.signature,
+        fromCoFHE: true
+      }
+    };
+  } catch (error) {
+    if (!softMatchesEnabled) {
+      throw error;
+    }
+
+    // Soft-match fallback: use the order's submitted values from Redis
+    if (order.baseAmountRaw && order.limitPriceRaw) {
+      console.warn(
+        `[MatchEngine] CoFHE unavailable for ${order.orderId.slice(0, 10)}…, using soft-match fallback`
+      );
+      return {
+        ...order,
+        matchState: {
+          remainingBaseRaw: order.baseAmountRaw,
+          remainingBaseSig: null,
+          limitPriceRaw: order.limitPriceRaw,
+          limitPriceSig: null,
+          fromCoFHE: false
+        }
+      };
+    }
+
+    console.error(`[MatchEngine] decrypt failed and no fallback data for ${order.orderId.slice(0, 10)}…: ${error.message}`);
+    return null;
+  }
 }
 
 async function processPair(tokenBase, tokenQuote) {
@@ -99,14 +157,26 @@ async function processPair(tokenBase, tokenQuote) {
   for (const orderId of buyOrderIds) {
     const order = await loadActiveOrder(orderId);
     if (order) {
-      buys.push(order);
+      const hydrated = await hydrateMatchState(order);
+      if (!hydrated) continue;
+      if (BigInt(hydrated.matchState.remainingBaseRaw) === 0n) {
+        await removeInactiveOrder(hydrated, "empty");
+      } else {
+        buys.push(hydrated);
+      }
     }
   }
 
   for (const orderId of sellOrderIds) {
     const order = await loadActiveOrder(orderId);
     if (order) {
-      sells.push(order);
+      const hydrated = await hydrateMatchState(order);
+      if (!hydrated) continue;
+      if (BigInt(hydrated.matchState.remainingBaseRaw) === 0n) {
+        await removeInactiveOrder(hydrated, "empty");
+      } else {
+        sells.push(hydrated);
+      }
     }
   }
 
@@ -119,49 +189,47 @@ async function processPair(tokenBase, tokenQuote) {
     const buyOrder = buys[0];
     const sellOrder = sells[0];
 
-    if (BigInt(buyOrder.limitPriceRaw) < BigInt(sellOrder.limitPriceRaw)) {
+    if (BigInt(buyOrder.matchState.limitPriceRaw) < BigInt(sellOrder.matchState.limitPriceRaw)) {
       break;
     }
 
     const baseDecimals = getTokenDecimals(tokenBase);
     const quoteDecimals = getTokenDecimals(tokenQuote);
     const matchedBaseRaw =
-      BigInt(buyOrder.remainingBaseRaw) < BigInt(sellOrder.remainingBaseRaw)
-        ? BigInt(buyOrder.remainingBaseRaw)
-        : BigInt(sellOrder.remainingBaseRaw);
+      BigInt(buyOrder.matchState.remainingBaseRaw) < BigInt(sellOrder.matchState.remainingBaseRaw)
+        ? BigInt(buyOrder.matchState.remainingBaseRaw)
+        : BigInt(sellOrder.matchState.remainingBaseRaw);
     const settlementPriceRaw =
-      (BigInt(buyOrder.limitPriceRaw) + BigInt(sellOrder.limitPriceRaw)) / 2n;
+      (BigInt(buyOrder.matchState.limitPriceRaw) + BigInt(sellOrder.matchState.limitPriceRaw)) / 2n;
     const quoteSpentRaw = quoteForBase(
       matchedBaseRaw.toString(),
       settlementPriceRaw.toString(),
       baseDecimals
     );
-    const quoteReservedAtLimitRaw = quoteForBase(
-      matchedBaseRaw.toString(),
-      buyOrder.limitPriceRaw,
-      baseDecimals
-    );
-
-    buyOrder.remainingBaseRaw = (BigInt(buyOrder.remainingBaseRaw) - matchedBaseRaw).toString();
-    sellOrder.remainingBaseRaw = (BigInt(sellOrder.remainingBaseRaw) - matchedBaseRaw).toString();
-    buyOrder.reservedQuoteRaw = (
-      BigInt(buyOrder.reservedQuoteRaw) - BigInt(quoteReservedAtLimitRaw)
+    const buyRemainingAfterRaw = (
+      BigInt(buyOrder.matchState.remainingBaseRaw) - matchedBaseRaw
     ).toString();
-
-    buyOrder.displayRemainingBase = formatDisplayUnits(buyOrder.remainingBaseRaw, baseDecimals);
-    sellOrder.displayRemainingBase = formatDisplayUnits(sellOrder.remainingBaseRaw, baseDecimals);
-
-    const buyFilled = BigInt(buyOrder.remainingBaseRaw) === 0n;
-    const sellFilled = BigInt(sellOrder.remainingBaseRaw) === 0n;
+    const sellRemainingAfterRaw = (
+      BigInt(sellOrder.matchState.remainingBaseRaw) - matchedBaseRaw
+    ).toString();
+    const buyFilled = BigInt(buyRemainingAfterRaw) === 0n;
+    const sellFilled = BigInt(sellRemainingAfterRaw) === 0n;
 
     let txHash;
     try {
       txHash = await web3Service.executeMatch(
         buyOrder.orderId,
         sellOrder.orderId,
-        true,
-        buyFilled,
-        sellFilled
+        {
+          buyRemainingBase: buyOrder.matchState.remainingBaseRaw,
+          buyRemainingBaseSig: buyOrder.matchState.remainingBaseSig,
+          sellRemainingBase: sellOrder.matchState.remainingBaseRaw,
+          sellRemainingBaseSig: sellOrder.matchState.remainingBaseSig,
+          buyLimitPrice: buyOrder.matchState.limitPriceRaw,
+          buyLimitPriceSig: buyOrder.matchState.limitPriceSig,
+          sellLimitPrice: sellOrder.matchState.limitPriceRaw,
+          sellLimitPriceSig: sellOrder.matchState.limitPriceSig
+        }
       );
     } catch (error) {
       const [activeBuy, activeSell] = await Promise.all([
@@ -189,15 +257,16 @@ async function processPair(tokenBase, tokenQuote) {
       }
     }
 
+    buyOrder.matchState.remainingBaseRaw = buyRemainingAfterRaw;
+    sellOrder.matchState.remainingBaseRaw = sellRemainingAfterRaw;
+
     buyOrder.status = buyFilled ? "executed" : "matched";
     buyOrder.txHash = txHash;
     buyOrder.executedAt = new Date().toISOString();
-    buyOrder.settlementPrice = formatDisplayUnits(settlementPriceRaw.toString(), quoteDecimals);
 
     sellOrder.status = sellFilled ? "executed" : "matched";
     sellOrder.txHash = txHash;
     sellOrder.executedAt = new Date().toISOString();
-    sellOrder.settlementPrice = formatDisplayUnits(settlementPriceRaw.toString(), quoteDecimals);
 
     await persistOrder(buyOrder);
     await persistOrder(sellOrder);

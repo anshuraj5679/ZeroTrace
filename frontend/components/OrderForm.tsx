@@ -28,17 +28,20 @@ const zeroTraceAddress = (process.env.NEXT_PUBLIC_ZEROTRACE_CONTRACT_ADDRESS ||
   "0x0000000000000000000000000000000000000000") as `0x${string}`;
 const pendingOrderStorageKey = "zerotrace.pendingOrderSync";
 
-type PendingOrderSync = Omit<SubmitOrderPayload, "signature" | "nonce" | "timestamp">;
+type PendingOrderSync = Omit<SubmitOrderPayload, "signature" | "nonce" | "timestamp"> & {
+  baseAmountRaw?: string;
+  limitPriceRaw?: string;
+};
 
 function buildAuthMessage(nonce: string, timestamp: number) {
   return `ZeroTrace Order Request\nNonce: ${nonce}\nTimestamp: ${timestamp}`;
 }
 
 const statusLabels: Record<string, string> = {
-  funding: "Minting…",
-  approving: "Approving…",
-  submitting: "Submitting…",
-  syncing: "Syncing…"
+  funding: "Minting...",
+  approving: "Approving...",
+  submitting: "Submitting...",
+  syncing: "Syncing..."
 };
 
 export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
@@ -56,10 +59,6 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const [pendingOrderSync, setPendingOrderSync] = useState<PendingOrderSync | null>(null);
 
   const pair = tradingPairs.find((entry) => entry.id === pairId) ?? tradingPairs[0];
-
-  if (!pair) {
-    return null;
-  }
 
   useEffect(() => {
     if (!address || typeof window === "undefined") {
@@ -85,6 +84,10 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
       window.localStorage.removeItem(pendingOrderStorageKey);
     }
   }, [address]);
+
+  if (!pair) {
+    return null;
+  }
 
   async function withSigner() {
     const { signer } = await initializeCofhe();
@@ -162,7 +165,6 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
       throw new Error("Connect a wallet before retrying sync.");
     }
 
-    const { baseAmountRaw, limitPriceRaw } = parseOrderValues();
     const signer = await withSigner();
     const provider = signer.provider;
 
@@ -194,8 +196,6 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
       txHash: hash,
       tokenBase,
       tokenQuote,
-      baseAmount: baseAmountRaw.toString(),
-      limitPrice: limitPriceRaw.toString(),
       isBuy
     };
   }
@@ -304,15 +304,16 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
       setTxHash(tx.hash);
       await tx.wait();
 
+      const { baseAmountRaw: rawBase, limitPriceRaw: rawPrice } = parseOrderValues();
       const pendingSyncPayload: PendingOrderSync = {
         walletAddress: address,
         orderId,
         txHash: tx.hash,
         tokenBase: pair.base.address,
         tokenQuote: pair.quote.address,
-        baseAmount: baseAmountRaw.toString(),
-        limitPrice: limitPriceRaw.toString(),
-        isBuy: side === "buy"
+        isBuy: side === "buy",
+        baseAmountRaw: rawBase.toString(),
+        limitPriceRaw: rawPrice.toString()
       };
 
       setPendingOrderSync(pendingSyncPayload);
@@ -460,7 +461,7 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
           className="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {status === "funding"
-            ? "Minting…"
+            ? "Minting..."
             : side === "buy"
               ? `Mint Private ${pair.quote.symbol}`
               : `Mint Private ${pair.base.symbol}`}
@@ -473,7 +474,7 @@ export function OrderForm({ onSubmitted }: { onSubmitted?: () => void }) {
           className="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {status === "approving"
-            ? "Approving…"
+            ? "Approving..."
             : side === "buy"
               ? `Approve ${pair.quote.symbol}`
               : `Approve ${pair.base.symbol}`}

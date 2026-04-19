@@ -5,7 +5,6 @@ function patchWasmModuleImport(config, isServer) {
     topLevelAwait: true
   });
 
-  config.optimization.moduleIds = "named";
   config.module.rules.push({
     test: /\.wasm$/,
     type: "asset/resource"
@@ -19,7 +18,7 @@ function patchWasmModuleImport(config, isServer) {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ["cofhejs"],
+  transpilePackages: ["@cofhe/sdk"],
   webpack: (config, { isServer }) => {
     patchWasmModuleImport(config, isServer);
 

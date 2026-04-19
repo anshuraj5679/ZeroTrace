@@ -31,7 +31,7 @@ export const privateTokenAbi = [
     name: "balanceOfEncrypted",
     stateMutability: "view",
     inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }]
+    outputs: [{ name: "", type: "bytes32" }]
   }
 ] as const;
 
@@ -63,9 +63,9 @@ export const zeroTraceAbi = [
     stateMutability: "view",
     inputs: [{ name: "orderId", type: "bytes32" }],
     outputs: [
-      { name: "remainingBase", type: "uint256" },
-      { name: "limitPrice", type: "uint256" },
-      { name: "reservedQuote", type: "uint256" }
+      { name: "remainingBase", type: "bytes32" },
+      { name: "limitPrice", type: "bytes32" },
+      { name: "reservedQuote", type: "bytes32" }
     ]
   }
 ] as const;

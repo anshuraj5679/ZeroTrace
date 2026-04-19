@@ -1,10 +1,10 @@
 "use client";
 
-import { Contract } from "ethers";
+import { Contract, formatUnits } from "ethers";
 import { useEffect, useState } from "react";
 import { useAccount, useSignMessage } from "wagmi";
 
-import { initializeCofhe } from "@/lib/cofhe";
+import { decryptUint128ForView, initializeCofhe } from "@/lib/cofhe";
 import { zeroTraceAbi } from "@/lib/contracts";
 import { cancelOrder, getMyOrders, type OrderStatus } from "@/lib/api";
 import { isZeroAddress } from "@/lib/tokens";
@@ -17,7 +17,8 @@ const badgeClass: Record<string, string> = {
   pending: "badge badge-pending",
   matched: "badge badge-matched",
   executed: "badge badge-executed",
-  cancelled: "badge badge-cancelled"
+  cancelled: "badge badge-cancelled",
+  empty: "badge badge-cancelled"
 };
 
 const zeroTraceAddress = (process.env.NEXT_PUBLIC_ZEROTRACE_CONTRACT_ADDRESS ||
@@ -27,6 +28,7 @@ export function OrderTable() {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const [orders, setOrders] = useState<OrderStatus[]>([]);
+  const [decryptedAmounts, setDecryptedAmounts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,6 +61,63 @@ export function OrderTable() {
       window.clearInterval(interval);
     };
   }, [address]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function decryptVisibleAmounts() {
+      if (!address) {
+        setDecryptedAmounts({});
+        return;
+      }
+
+      const pendingHandles = orders.filter(
+        (order) =>
+          order.remainingBaseHandle &&
+          decryptedAmounts[order.remainingBaseHandle] === undefined
+      );
+
+      if (pendingHandles.length === 0) {
+        return;
+      }
+
+      const nextEntries = await Promise.all(
+        pendingHandles.map(async (order) => {
+          try {
+            const decrypted = await decryptUint128ForView(order.remainingBaseHandle!);
+            return [
+              order.remainingBaseHandle!,
+              formatUnits(decrypted, order.baseTokenDecimals)
+            ] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      if (!active) {
+        return;
+      }
+
+      setDecryptedAmounts((current) => {
+        const next = { ...current };
+
+        for (const entry of nextEntries) {
+          if (entry) {
+            next[entry[0]] = entry[1];
+          }
+        }
+
+        return next;
+      });
+    }
+
+    decryptVisibleAmounts();
+
+    return () => {
+      active = false;
+    };
+  }, [address, orders, decryptedAmounts]);
 
   async function handleCancel(orderId: string) {
     if (!address) {
@@ -137,7 +196,12 @@ export function OrderTable() {
                 <td className={`py-2.5 font-[var(--font-mono)] text-xs uppercase ${order.isBuy ? "text-buy" : "text-sell"}`}>
                   {order.isBuy ? "Buy" : "Sell"}
                 </td>
-                <td className="py-2.5 font-[var(--font-mono)] text-text">{order.amount}</td>
+                <td className="py-2.5 font-[var(--font-mono)] text-text">
+                  {order.amount ||
+                    (order.remainingBaseHandle
+                      ? decryptedAmounts[order.remainingBaseHandle] || "Encrypted"
+                      : "Unavailable")}
+                </td>
                 <td className="py-2.5">
                   <span className={badgeClass[order.status] || badgeClass.pending}>
                     {order.status}

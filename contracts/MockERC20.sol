@@ -108,15 +108,15 @@ contract MockERC20 is ERC20 {
         return _transferEncrypted(from, to, approvedAmount);
     }
 
-    function balanceOfEncrypted(address account) external view returns (uint256) {
+    function balanceOfEncrypted(address account) external view returns (bytes32) {
         return euint128.unwrap(_encryptedBalances[account]);
     }
 
-    function allowanceEncrypted(address owner, address spender) external view returns (uint256) {
+    function allowanceEncrypted(address owner, address spender) external view returns (bytes32) {
         return euint128.unwrap(_encryptedAllowances[owner][spender]);
     }
 
-    function encryptedTotalSupply() external view returns (uint256) {
+    function encryptedTotalSupply() external view returns (bytes32) {
         return euint128.unwrap(_encryptedSupply);
     }
 
@@ -130,6 +130,9 @@ contract MockERC20 is ERC20 {
 
         _encryptedBalances[from] = FHE.sub(_encryptedBalances[from], transferred);
         _encryptedBalances[to] = FHE.add(_encryptedBalances[to], transferred);
+
+        FHE.allowThis(transferred);
+        FHE.allow(transferred, msg.sender);
 
         _grantBalanceAccess(from);
         _grantBalanceAccess(to);

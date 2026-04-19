@@ -4,7 +4,8 @@ const { Contract, JsonRpcProvider, Wallet } = require("ethers");
 
 const zeroTraceAbi = [
   "function getOrder(bytes32 orderId) view returns (address trader, address tokenBase, address tokenQuote, bool isBuy, bool cancelled, bool closed, uint8 baseTokenDecimals, uint256 timestamp)",
-  "function executeMatch(bytes32 buyOrderId, bytes32 sellOrderId, bool crossed, bool buyFilled, bool sellFilled)"
+  "function getOrderCiphertexts(bytes32 orderId) view returns (bytes32 remainingBase, bytes32 limitPrice, bytes32 reservedQuote)",
+  "function executeMatch(bytes32 buyOrderId, bytes32 sellOrderId, tuple(uint128 buyRemainingBase, bytes buyRemainingBaseSig, uint128 sellRemainingBase, bytes sellRemainingBaseSig, uint128 buyLimitPrice, bytes buyLimitPriceSig, uint128 sellLimitPrice, bytes sellLimitPriceSig) proof)"
 ];
 
 let provider;
@@ -99,21 +100,33 @@ async function getOrder(orderId) {
   });
 }
 
-async function executeMatch(buyOrderId, sellOrderId, crossed, buyFilled, sellFilled) {
+async function executeMatch(buyOrderId, sellOrderId, proof) {
   return withRetry(async () => {
     const tx = await getWriteContract().executeMatch(
       buyOrderId,
       sellOrderId,
-      crossed,
-      buyFilled,
-      sellFilled
+      proof
     );
     await tx.wait();
     return tx.hash;
   });
 }
 
+async function getOrderCiphertexts(orderId) {
+  return withRetry(async () => {
+    const [remainingBase, limitPrice, reservedQuote] =
+      await getReadContract().getOrderCiphertexts(orderId);
+
+    return {
+      remainingBase,
+      limitPrice,
+      reservedQuote
+    };
+  });
+}
+
 module.exports = {
   executeMatch,
-  getOrder
+  getOrder,
+  getOrderCiphertexts
 };

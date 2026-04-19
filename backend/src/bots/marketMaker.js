@@ -7,6 +7,13 @@ require("dotenv").config({
 
 const axios = require("axios");
 const {
+  Encryptable,
+  createCofheClient,
+  createCofheConfig
+} = require("@cofhe/sdk/node");
+const { Ethers6Adapter } = require("@cofhe/sdk/adapters");
+const { arbSepolia, hardhat, sepolia } = require("@cofhe/sdk/chains");
+const {
   Contract,
   JsonRpcProvider,
   Wallet,
@@ -14,7 +21,6 @@ const {
   parseUnits,
   solidityPackedKeccak256
 } = require("ethers");
-const { cofhejs, Encryptable } = require("cofhejs/node");
 
 const { buildAuthMessage } = require("../middleware/auth");
 
@@ -35,7 +41,7 @@ const privateTokenAbi = [
 ];
 
 let provider;
-let signerPromise;
+let cofheContextPromise;
 let tickInProgress = false;
 
 function loadDeploymentConfig() {
@@ -110,42 +116,42 @@ function quoteForBase(baseAmountRaw, limitPriceRaw, baseTokenDecimals) {
   return (baseAmountRaw * limitPriceRaw) / 10n ** BigInt(baseTokenDecimals);
 }
 
-async function encryptUint128(value) {
-  const result = await cofhejs.encrypt([Encryptable.uint128(value)]);
-  if (!result.success) {
-    throw result.error;
-  }
-
-  return result.data[0];
+function createNodeCofheConfig() {
+  return createCofheConfig({
+    supportedChains: [hardhat, sepolia, arbSepolia],
+    fheKeyStorage: null,
+    mocks: {
+      decryptDelay: 0,
+      encryptDelay: 0
+    }
+  });
 }
 
-async function initializeCofhe(wallet) {
+async function createCofheContext(wallet) {
   const nextProvider = getProvider();
   const signer = wallet.connect(nextProvider);
-  const network = await nextProvider.getNetwork();
-  const result = await cofhejs.initializeWithEthers({
-    ethersProvider: nextProvider,
-    ethersSigner: signer,
-    environment: network.chainId === 31337n ? "MOCK" : "TESTNET",
-    generatePermit: true
-  });
+  const client = createCofheClient(createNodeCofheConfig());
+  const { publicClient, walletClient } = await Ethers6Adapter(nextProvider, signer);
 
-  if (!result.success) {
-    throw result.error;
-  }
+  await client.connect(publicClient, walletClient);
 
-  return signer;
+  return { client, signer };
 }
 
-async function getSigner(wallet) {
-  if (!signerPromise) {
-    signerPromise = initializeCofhe(wallet).catch((error) => {
-      signerPromise = undefined;
+async function getCofheContext(wallet) {
+  if (!cofheContextPromise) {
+    cofheContextPromise = createCofheContext(wallet).catch((error) => {
+      cofheContextPromise = undefined;
       throw error;
     });
   }
 
-  return signerPromise;
+  return cofheContextPromise;
+}
+
+async function encryptUint128(client, value) {
+  const [encrypted] = await client.encryptInputs([Encryptable.uint128(value)]).execute();
+  return encrypted;
 }
 
 async function ensureApiAvailable() {
@@ -155,7 +161,7 @@ async function ensureApiAvailable() {
 }
 
 async function placeOrder(wallet, side, price) {
-  const signer = await getSigner(wallet);
+  const { client, signer } = await getCofheContext(wallet);
   const zeroTrace = new Contract(runtimeConfig.zeroTraceAddress, zeroTraceAbi, signer);
   const zusdc = new Contract(runtimeConfig.zusdcAddress, privateTokenAbi, signer);
   const zeth = new Contract(runtimeConfig.zethAddress, privateTokenAbi, signer);
@@ -181,10 +187,10 @@ async function placeOrder(wallet, side, price) {
     ]
   );
 
-  const encryptedFundingAmount = await encryptUint128(approvalAmount);
-  const encryptedApprovalAmount = await encryptUint128(approvalAmount);
-  const encryptedBaseAmount = await encryptUint128(baseAmountRaw);
-  const encryptedLimitPrice = await encryptUint128(limitPriceRaw);
+  const encryptedFundingAmount = await encryptUint128(client, approvalAmount);
+  const encryptedApprovalAmount = await encryptUint128(client, approvalAmount);
+  const encryptedBaseAmount = await encryptUint128(client, baseAmountRaw);
+  const encryptedLimitPrice = await encryptUint128(client, limitPriceRaw);
 
   if (side === "buy") {
     await (await zusdc.mintEncrypted(wallet.address, encryptedFundingAmount)).wait();
@@ -216,8 +222,6 @@ async function placeOrder(wallet, side, price) {
     txHash: tx.hash,
     tokenBase: runtimeConfig.zethAddress,
     tokenQuote: runtimeConfig.zusdcAddress,
-    baseAmount: baseAmountRaw.toString(),
-    limitPrice: limitPriceRaw.toString(),
     isBuy: side === "buy",
     signature,
     nonce,

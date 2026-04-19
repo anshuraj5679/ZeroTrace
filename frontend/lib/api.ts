@@ -20,10 +20,14 @@ export type OrderStatus = {
   tokenIn: string;
   tokenOut: string;
   pair: string;
-  amount: string;
+  amount: string | null;
   isBuy: boolean;
   timestamp: string;
   txHash: string | null;
+  remainingBaseHandle: string | null;
+  limitPriceHandle: string | null;
+  baseTokenDecimals: number;
+  quoteTokenDecimals: number;
 };
 
 export type TradeHistoryItem = {
@@ -58,12 +62,12 @@ export type SubmitOrderPayload = {
   txHash: string;
   tokenBase: string;
   tokenQuote: string;
-  baseAmount: string;
-  limitPrice: string;
   isBuy: boolean;
   signature: string;
   nonce: string;
   timestamp: number;
+  baseAmountRaw?: string;
+  limitPriceRaw?: string;
 };
 
 export type CancelOrderPayload = {

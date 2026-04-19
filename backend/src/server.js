@@ -33,9 +33,27 @@ app.use("/api/v1/status", statusRouter);
 app.use(errorHandler);
 
 async function bootstrap() {
-  await redisService.connect();
-  await postgresService.connect();
-  startMatchingEngine();
+  // Connect to external services gracefully - don't crash the server if
+  // Redis or PostgreSQL is temporarily unreachable.
+  try {
+    await redisService.connect();
+    console.log("[ZeroTrace API] Redis connected");
+  } catch (error) {
+    console.warn("[ZeroTrace API] Redis unavailable - continuing without it:", error.message);
+  }
+
+  try {
+    await postgresService.connect();
+    console.log("[ZeroTrace API] PostgreSQL connected");
+  } catch (error) {
+    console.warn("[ZeroTrace API] PostgreSQL unavailable - continuing without it:", error.message);
+  }
+
+  try {
+    startMatchingEngine();
+  } catch (error) {
+    console.warn("[ZeroTrace API] Matching engine failed to start:", error.message);
+  }
 
   const port = Number(process.env.PORT || 4000);
   app.listen(port, () => {

@@ -5,13 +5,6 @@ const addressSchema = z.string().refine((value) => isAddress(value), {
   message: "Invalid address"
 });
 
-const positiveIntegerString = z
-  .union([z.string(), z.number()])
-  .transform((value) => value.toString())
-  .refine((value) => /^\d+$/.test(value) && BigInt(value) > 0n, {
-    message: "Must be a positive integer string"
-  });
-
 const hash32Schema = z.string().regex(/^0x[a-fA-F0-9]{64}$/);
 
 const authFieldsSchema = {
@@ -27,9 +20,9 @@ const submitOrderSchema = z.object({
   txHash: hash32Schema,
   tokenBase: addressSchema,
   tokenQuote: addressSchema,
-  baseAmount: positiveIntegerString,
-  limitPrice: positiveIntegerString,
-  isBuy: z.boolean()
+  isBuy: z.boolean(),
+  baseAmountRaw: z.string().optional(),
+  limitPriceRaw: z.string().optional()
 });
 
 const cancelOrderSchema = z.object({

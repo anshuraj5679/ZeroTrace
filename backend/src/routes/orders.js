@@ -1,6 +1,6 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
-const { getAddress, formatUnits: formatTokenUnits } = require("ethers");
+const { getAddress } = require("ethers");
 
 const { cancelOrderSchema, submitOrderSchema, walletQuerySchema } = require("../models/order");
 const redisService = require("../services/redisService");
@@ -19,28 +19,37 @@ const submitLimiter = rateLimit({
   legacyHeaders: false
 });
 
-function quoteForBase(baseAmountRaw, limitPriceRaw, baseTokenDecimals) {
-  return (
-    (BigInt(baseAmountRaw) * BigInt(limitPriceRaw)) /
-    10n ** BigInt(baseTokenDecimals)
-  ).toString();
+async function getOrderHandles(orderId) {
+  try {
+    const handles = await web3Service.getOrderCiphertexts(orderId);
+
+    return {
+      remainingBaseHandle: handles.remainingBase.toString(),
+      limitPriceHandle: handles.limitPrice.toString()
+    };
+  } catch {
+    return {
+      remainingBaseHandle: null,
+      limitPriceHandle: null
+    };
+  }
 }
 
-function formatDisplayUnits(rawValue, decimals) {
-  return formatTokenUnits(BigInt(rawValue), decimals);
-}
-
-function sanitizeOrder(order) {
+function sanitizeOrder(order, handles) {
   return {
     orderId: order.orderId,
     status: order.status,
     tokenIn: order.tokenBase,
     tokenOut: order.tokenQuote,
     pair: order.pair,
-    amount: order.displayRemainingBase,
+    amount: null,
     isBuy: order.isBuy,
     timestamp: order.timestamp,
-    txHash: order.txHash || null
+    txHash: order.txHash || null,
+    remainingBaseHandle: handles.remainingBaseHandle,
+    limitPriceHandle: handles.limitPriceHandle,
+    baseTokenDecimals: order.baseTokenDecimals,
+    quoteTokenDecimals: order.quoteTokenDecimals
   };
 }
 
@@ -81,22 +90,15 @@ router.post("/submit", submitLimiter, verifySignature, async (req, res, next) =>
       walletAddress,
       tokenBase,
       tokenQuote,
-      baseAmountRaw: payload.baseAmount,
-      remainingBaseRaw: payload.baseAmount,
-      limitPriceRaw: payload.limitPrice,
-      reservedQuoteRaw: payload.isBuy
-        ? quoteForBase(payload.baseAmount, payload.limitPrice, baseTokenDecimals)
-        : "0",
-      displayBaseAmount: formatDisplayUnits(payload.baseAmount, baseTokenDecimals),
-      displayRemainingBase: formatDisplayUnits(payload.baseAmount, baseTokenDecimals),
-      displayLimitPrice: formatDisplayUnits(payload.limitPrice, quoteTokenDecimals),
       isBuy: payload.isBuy,
       status: "pending",
       timestamp,
       pair: toPairLabel(tokenBase, tokenQuote),
       nonce: payload.nonce,
       baseTokenDecimals,
-      quoteTokenDecimals
+      quoteTokenDecimals,
+      baseAmountRaw: payload.baseAmountRaw || null,
+      limitPriceRaw: payload.limitPriceRaw || null
     };
 
     await redisService.setOrder(payload.orderId, encryptPayload(order));
@@ -128,7 +130,8 @@ router.get("/status/:orderId", async (req, res, next) => {
       });
     }
 
-    return sendSuccess(res, sanitizeOrder(decryptPayload(serialized)));
+    const order = decryptPayload(serialized);
+    return sendSuccess(res, sanitizeOrder(order, await getOrderHandles(order.orderId)));
   } catch (error) {
     next(error);
   }
@@ -138,14 +141,19 @@ router.get("/my-orders", async (req, res, next) => {
   try {
     const { wallet } = walletQuerySchema.parse(req.query);
     const orderIds = await redisService.getWalletOrders(wallet);
-    const orders = [];
+    const orders = (
+      await Promise.all(
+        orderIds.map(async (orderId) => {
+          const serialized = await redisService.getOrder(orderId);
+          if (!serialized) {
+            return null;
+          }
 
-    for (const orderId of orderIds) {
-      const serialized = await redisService.getOrder(orderId);
-      if (serialized) {
-        orders.push(sanitizeOrder(decryptPayload(serialized)));
-      }
-    }
+          const order = decryptPayload(serialized);
+          return sanitizeOrder(order, await getOrderHandles(order.orderId));
+        })
+      )
+    ).filter(Boolean);
 
     orders.sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp));
 

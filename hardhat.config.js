@@ -1,4 +1,4 @@
-require("cofhe-hardhat-plugin");
+require("@cofhe/hardhat-plugin");
 require("@nomicfoundation/hardhat-toolbox");
 require("dotenv").config();
 

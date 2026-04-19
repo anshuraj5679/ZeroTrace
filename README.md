@@ -8,7 +8,7 @@
 
 Trade Without a Trail
 
-![Solidity 0.8.20](https://img.shields.io/badge/Solidity-0.8.20-1a1a1a?style=for-the-badge)
+![Solidity 0.8.25](https://img.shields.io/badge/Solidity-0.8.25-1a1a1a?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-Backend-00f5ff?style=for-the-badge)
 ![Next.js 14](https://img.shields.io/badge/Next.js-14-e0e0e0?style=for-the-badge)
 ![Sepolia Testnet](https://img.shields.io/badge/Sepolia-Testnet-00ff88?style=for-the-badge)
@@ -31,10 +31,10 @@ ZeroTrace is a private trading terminal for encrypted order flow on EVM testnets
 ## Architecture
 
 ```text
-Frontend (Next.js + RainbowKit + cofhejs)
+Frontend (Next.js + RainbowKit + @cofhe/sdk)
         |
         v
-Direct Wallet CoFHE Submission + API Index
+Direct Wallet CoFHE Submission + Permit-Based View Decrypt
         |
         v
 Matching Engine + Rewards + Webhooks
@@ -45,9 +45,10 @@ Smart Contract (ZeroTrace + private MockERC20 on Sepolia)
 
 ## CoFHE Flow
 
-- The wallet encrypts `baseAmount` and `limitPrice` client-side with `cofhejs`, then submits them directly to `ZeroTrace.sol`.
-- The backend stores only authenticated order metadata and plaintext matching hints in AES-encrypted Redis records; encrypted contract state stays private on-chain.
-- The operator calls `executeMatch` on candidate pairs, and the contract settles against encrypted balances while keeping order fields and fill state in CoFHE ciphertexts.
+- The wallet encrypts `baseAmount` and `limitPrice` client-side with `@cofhe/sdk`, submits them directly to `ZeroTrace.sol`, and uses permit-based `decryptForView` for authorized reads.
+- The backend stores only authenticated order metadata in AES-encrypted Redis records; it resolves ciphertext handles from chain state and decrypts transiently with operator `decryptForTx` permits during matching.
+- The operator calls `executeMatch` with threshold-network decrypt signatures for the current encrypted order state. The contract verifies those signatures, derives crossing and fill status, and settles against encrypted balances.
+- Resting orders stay encrypted from the public chain and API. Executed trade size and price are revealed in settlement calldata so the contract can verify the match.
 
 ## Quick Start
 
@@ -77,6 +78,24 @@ Smart Contract (ZeroTrace + private MockERC20 on Sepolia)
    ```
 
 5. Update `backend/.env` and `frontend/.env.local` with the deployed contract and token addresses.
+
+   Required runtime values:
+
+   ```bash
+   # backend/.env
+   PRIVATE_KEY=<operator_private_key>
+   RPC_URL=<sepolia_or_arbitrum_sepolia_rpc>
+   ZEROTRACE_CONTRACT_ADDRESS=<ZeroTrace>
+   ZUSDC_ADDRESS=<ZUSDC>
+   ZETH_ADDRESS=<ZETH>
+   ENCRYPTION_KEY=<32-byte-hex-key>
+
+   # frontend/.env.local
+   NEXT_PUBLIC_RPC_URL=<same_chain_rpc>
+   NEXT_PUBLIC_ZEROTRACE_CONTRACT_ADDRESS=<ZeroTrace>
+   NEXT_PUBLIC_ZUSDC_ADDRESS=<ZUSDC>
+   NEXT_PUBLIC_ZETH_ADDRESS=<ZETH>
+   ```
 
 6. Start the backend:
 

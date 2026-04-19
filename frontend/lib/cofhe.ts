@@ -1,7 +1,16 @@
 "use client";
 
 import { BrowserProvider, type JsonRpcSigner, solidityPackedKeccak256 } from "ethers";
-import type { CoFheInUint128 } from "cofhejs/web";
+import {
+  Encryptable,
+  FheTypes,
+  type CofheClient,
+  type DecryptForTxResult,
+  type EncryptedUint128Input
+} from "@cofhe/sdk";
+import { Ethers6Adapter } from "@cofhe/sdk/adapters";
+import { arbSepolia, hardhat, sepolia } from "@cofhe/sdk/chains";
+import { createCofheClient, createCofheConfig } from "@cofhe/sdk/web";
 
 type BrowserEthereum = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -13,12 +22,25 @@ declare global {
   }
 }
 
-function getEnvironment(chainId: bigint) {
-  if (chainId === 31337n || chainId === 1337n) {
-    return "MOCK" as const;
+let cofheClient: CofheClient | null = null;
+
+function getCofheClient() {
+  if (typeof window === "undefined" || !window.document) {
+    throw new Error("CoFHE client is only available in the browser.");
   }
 
-  return "TESTNET" as const;
+  if (!cofheClient) {
+    cofheClient = createCofheClient(
+      createCofheConfig({
+        supportedChains: [hardhat, sepolia, arbSepolia],
+        mocks: {
+          decryptDelay: 0
+        }
+      })
+    );
+  }
+
+  return cofheClient;
 }
 
 export function buildOrderId(
@@ -54,69 +76,78 @@ export function quoteForBase(
   return (baseAmountRaw * limitPriceRaw) / 10n ** BigInt(baseTokenDecimals);
 }
 
-export async function initializeCofhe() {
+async function connectCofheClient(): Promise<CofheWalletContext> {
   if (!window.ethereum) {
     throw new Error("Wallet provider not found.");
   }
 
-  const { cofhejs } = await import("cofhejs/web");
   const provider = new BrowserProvider(window.ethereum as never);
   const signer = await provider.getSigner();
-  const network = await provider.getNetwork();
-  const result = await cofhejs.initializeWithEthers({
-    ethersProvider: provider,
-    ethersSigner: signer,
-    environment: getEnvironment(network.chainId),
-    generatePermit: true
+  const { publicClient, walletClient } = await Ethers6Adapter(provider, signer);
+  const client = getCofheClient();
+
+  await client.connect(publicClient, walletClient);
+
+  return {
+    client,
+    provider,
+    signer,
+    account: (await signer.getAddress()) as `0x${string}`
+  };
+}
+
+async function ensureSelfPermit(client: CofheClient, issuer: `0x${string}`) {
+  return client.permits.getOrCreateSelfPermit(undefined, undefined, {
+    issuer,
+    name: "ZeroTrace Self Permit"
   });
+}
 
-  if (!result.success) {
-    throw result.error;
-  }
-
+export async function initializeCofhe() {
+  const { provider, signer } = await connectCofheClient();
   return { provider, signer };
 }
 
 export async function encryptUint128Pair(
   first: bigint,
   second: bigint
-): Promise<[CoFheInUint128, CoFheInUint128]> {
-  const { cofhejs, Encryptable } = await import("cofhejs/web");
-  const result = await cofhejs.encrypt([
-    Encryptable.uint128(first),
-    Encryptable.uint128(second)
-  ]);
+): Promise<[EncryptedUint128Input, EncryptedUint128Input]> {
+  const { client } = await connectCofheClient();
+  const encrypted = await client
+    .encryptInputs([Encryptable.uint128(first), Encryptable.uint128(second)])
+    .execute();
 
-  if (!result.success) {
-    throw result.error;
-  }
-
-  return result.data;
+  return [encrypted[0], encrypted[1]];
 }
 
-export async function encryptUint128(value: bigint): Promise<CoFheInUint128> {
-  const { cofhejs, Encryptable } = await import("cofhejs/web");
-  const result = await cofhejs.encrypt([Encryptable.uint128(value)]);
-
-  if (!result.success) {
-    throw result.error;
-  }
-
-  return result.data[0];
+export async function encryptUint128(value: bigint): Promise<EncryptedUint128Input> {
+  const { client } = await connectCofheClient();
+  const [encrypted] = await client.encryptInputs([Encryptable.uint128(value)]).execute();
+  return encrypted;
 }
 
-export async function unsealUint128(ctHash: bigint) {
-  const { cofhejs, FheTypes } = await import("cofhejs/web");
-  const result = await cofhejs.unseal(ctHash, FheTypes.Uint128);
+export async function decryptUint128ForView(ctHash: bigint | string) {
+  const { client, account } = await connectCofheClient();
+  const permit = await ensureSelfPermit(client, account);
 
-  if (!result.success) {
-    throw result.error;
-  }
+  return client
+    .decryptForView(ctHash, FheTypes.Uint128)
+    .withPermit(permit)
+    .execute();
+}
 
-  return result.data;
+export async function decryptUint128ForTx(
+  ctHash: bigint | string
+): Promise<DecryptForTxResult> {
+  const { client, account } = await connectCofheClient();
+  const permit = await ensureSelfPermit(client, account);
+
+  return client.decryptForTx(ctHash).withPermit(permit).execute();
 }
 
 export type CofheWalletContext = {
+  client: CofheClient;
   provider: BrowserProvider;
   signer: JsonRpcSigner;
+  account: `0x${string}`;
 };

@@ -3,7 +3,6 @@ import dynamic from "next/dynamic";
 import { Inter, JetBrains_Mono } from "next/font/google";
 
 import "@/app/globals.css";
-import { Footer } from "@/components/Footer";
 import { Navbar } from "@/components/Navbar";
 
 const AppProviders = dynamic(
@@ -25,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "ZeroTrace — Trade Without a Trail",
-  description: "MEV-resistant private order matching. Your trades stay invisible until executed."
+  description: "MEV-resistant private order matching powered by fully homomorphic encryption. Your trades stay invisible until executed."
 };
 
 export default function RootLayout({
@@ -42,8 +41,7 @@ export default function RootLayout({
           <div className="noise-overlay" aria-hidden="true" />
           <div className="flex min-h-screen flex-col">
             <Navbar />
-            <main className="flex-1 px-4 pb-12 pt-24 sm:px-6 lg:px-8">{children}</main>
-            <Footer />
+            <main className="flex-1">{children}</main>
           </div>
         </AppProviders>
       </body>

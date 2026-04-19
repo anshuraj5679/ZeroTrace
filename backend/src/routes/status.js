@@ -9,11 +9,16 @@ const router = express.Router();
 
 router.get("/", async (_req, res, next) => {
   try {
-    await postgresService.healthCheck();
-    await redisService.getActiveOrdersCount();
+    let pgOk = false;
+    let redisOk = false;
+
+    try { await postgresService.healthCheck(); pgOk = true; } catch (_) {}
+    try { await redisService.getActiveOrdersCount(); redisOk = true; } catch (_) {}
 
     return sendSuccess(res, {
-      status: "ok",
+      status: pgOk && redisOk ? "ok" : "degraded",
+      postgres: pgOk ? "connected" : "unavailable",
+      redis: redisOk ? "connected" : "unavailable",
       timestamp: new Date().toISOString()
     });
   } catch (error) {
