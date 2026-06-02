@@ -2,6 +2,8 @@
 
 This repository is the old ZeroTrace submission repo and is no longer the active project for review.
 
+We have already informed the Telegram group that ZeroTrace has migrated and been rebranded to Obsidian, so this README is only here to avoid confusion for anyone opening the old submission link.
+
 Please review the upgraded product here:
 
 - New GitHub repository: https://github.com/anshuraj5679/Obsidian
