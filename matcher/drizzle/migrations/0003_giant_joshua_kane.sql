@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX IF NOT EXISTS "tasks_idempotency_key_unique" ON "tasks" USING btree ("idempotency_key");
